@@ -10,7 +10,7 @@ from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, BisectingKM
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score
 import scipy.cluster.hierarchy as sch
-# import hdbscan 
+import hdbscan 
 from minisom import MiniSom 
 import os
 
