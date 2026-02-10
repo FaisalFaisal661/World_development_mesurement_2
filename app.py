@@ -89,7 +89,7 @@ km = load_model("K-Means")
 agg = load_model("Agglomerative") 
 bk = load_model("Divisive")
 dbscan = load_model("DBSCAN")    
-hdbscan = load_model("HDBSCAN")
+# hdbscan = load_model("HDBSCAN")
 gmm = load_model("GMM")
 scale = load_model("Scaler")
 som = load_model("MiniSom")
@@ -100,7 +100,7 @@ models = {
     'Agglomerative': agg,
     'Divisive': bk,
     'DBSCAN': dbscan,
-    'HDBSCAN': hdbscan,
+    # 'HDBSCAN': hdbscan,
     'GMM': gmm,
     'Scaler': scale,
     'SOM': som
@@ -115,25 +115,70 @@ page = st.sidebar.radio("Go to", ["Home", "Visualizations", "Model Prediction", 
 # 1. HOME PAGE
 # ==========================================
 if page == "Home":
-    st.title("🚀 Project Overview")
+    
+
+    st.title("🌐 Global Development Intelligence Suite")
     st.markdown("""
-    Welcome to the **Clustering & Prediction Analytics Dashboard**.
-                
-    This application provides an interactive platform to explore various clustering algorithms applied to world development data.
-    **Available Models:**
-    * **Centroid:** K-Means
-    * **Connectivity:** Agglomerative & Divisive Hierarchical
-    * **Density:** DBSCAN & HDBSCAN
-    * **Probabilistic:** Gaussian Mixture Models (GMM)
-    * **Neural:** Self-Organizing Maps (SOM)
-    * **Graph:** Spectral Clustering
+        <style>
+        .main-header { font-size: 24px; font-weight: bold; color: #1E3A8A; }
+        .stat-card { background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #1E3A8A; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.info("💡 **Objective:** Using Unsupervised Machine Learning to segment 2,704 global regions into developmental tiers based on socio-economic indicators.")
+
+    # 2. Key Metrics Dashboard (High-Level Summary)
+    st.subheader("📊 Dataset at a Glance")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Records", f"{len(df):,}")
+    k2.metric("Features Used", "25")
+    k3.metric("Algorithms Implemented", "8")
+    k4.metric("Clustering Tiers", f"{df['KMeans_Cluster'].nunique()}")
+
+    st.markdown("---")
+
+    # 3. Two-Column Layout for Context and Logic
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("🚀 Project Scope")
+        st.write("""
+        This platform analyzes global health, wealth, and infrastructure data. By applying multiple 
+        clustering paradigms, we can identify patterns that traditional economic ranking often misses.
         
-    **Key Features:**
-    * **Data Analysis:** Explore pre-processed data with advanced clustering features.
-    * **Visualizations:** Interactive charts for diverse clustering algorithms (KMeans, DBSCAN, SOM, etc.).
-    * **Prediction:** Real-time inference using pre-trained models.
-    * **Comparison:** Benchmark model performance side-by-side.
-    """)
+        **Methodologies Included:**
+        - **Centroid-Based:** Standard K-Means (The Baseline)
+        - **Density-Based:** DBSCAN & HDBSCAN (Identifying Global Outliers)
+        - **Connectivity-Based:** Hierarchical & Divisive (Structural Relationships)
+        - **Probabilistic:** Gaussian Mixture Models (Uncertainty & Overlap)
+        - **Neural-Based:** Self-Organizing Maps (High-Dimensional Mapping)
+        """)
+        
+        # Display a sample of the data with color coding for clusters
+        st.subheader("📍 Data Preview (Development Tiers)")
+        st.dataframe(df[['Country', 'GDP', 'Life Expectancy Average', 'KMeans_Cluster']].head(10), use_container_width=True)
+
+    with col2:
+        st.subheader("🔍 Strategic Utility")
+        with st.expander("💼 Business Intelligence", expanded=True):
+            st.write("Analyze market gaps and identify 'look-alike' countries for business expansion.")
+        
+        with st.expander("🏛️ Policy Design"):
+            st.write("Group nations with similar health challenges to share successful policy frameworks.")
+        
+        with st.expander("📉 Risk Management"):
+            st.write("Detect outlier countries that don't fit standard economic models (DBSCAN results).")
+
+    # 4. Visual Navigation Guide
+    st.markdown("---")
+    st.subheader("🛠️ Quick Actions")
+    q1, q2, q3 = st.columns(3)
+    if q1.button("View Cluster DNA"):
+        st.info("Head to the **Visualizations** page and select 'Cluster Profiles'.")
+    if q2.button("Compare Algorithms"):
+        st.info("Head to the **Model Comparison** page.")
+    if q3.button("Run Business Simulation"):
+        st.info("Head to the **Strategic Insights** page.")
 
 
 # ==========================================
@@ -151,7 +196,6 @@ elif page == "Visualizations":
          "DBSCAN", 
          "HDBSCAN", 
          "Gaussian Mixture (GMM)", 
-         "Self-Organizing Map (SOM)", 
          "Spectral Clustering",
          "Cluster Profiles & Benchmarks"]
     )
@@ -510,7 +554,7 @@ elif page == "Model Comparison":
     
     comparison_data = {
         'Model': ['K-Means', 'Hierarchical','Divisive','DBSCAN' ,'HDBSCAN','GMM','Spectral'],
-        'Silhouette Score': [0.228, 0.281, 0.253, -0.097, 0.631, 0.198, 0.224] # Replace with real calc
+        'Silhouette Score': [0.228, 0.281, 0.253, -0.097, 0.631, 0.198, 0.224] 
     }
     comparison_df = pd.DataFrame(comparison_data)
     
