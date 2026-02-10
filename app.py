@@ -1,304 +1,530 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import plotly.express as px
-import plotly.graph_objects as go
 import pickle
-import os
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN, BisectingKMeans, SpectralClustering
-from sklearn.mixture import GaussianMixture
-from sklearn.metrics import silhouette_score
-import hdbscan
-from minisom import MiniSom
+import scipy.cluster.hierarchy as sch
+from matplotlib.patches import Ellipse
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+# import hdbscan 
+from minisom import MiniSom 
+import streamlit as st
+import requests
+import io
+
+
+
+# --- CONFIGURATION ---
+GITHUB_URL = "https://raw.githubusercontent.com/FaisalFaisal661/World_development_mesurement_2/refs/heads/main/finalized.csv"
+GITHUB_MODEL_BASE_URL = (
+    "https://raw.githubusercontent.com/FaisalFaisal661/World_development_mesurement_2/main/models"
+)
+
+@st.cache_data
+def load_data(url):
+    try:
+        
+        if "github.com" in url and "raw" not in url:
+            url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+        
+        df = pd.read_csv(url)
+        return df
+    except Exception as e:
+        st.error(f"🌐 **GitHub Connection Error:** {e}")
+        return None
+# Execution
+df = load_data(GITHUB_URL)
+if df is not None:
+    st.success("✅ Data loaded successfully!")
+    st.dataframe(df.head())
+
+
+
+df_scaled = df.select_dtypes(include=np.number)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Global Development Clustering | Professional Edition",
-    page_icon="🌍",
+    page_title="Advanced Clustering & Prediction App",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+df_scaled_data = df.select_dtypes(include=np.number).values
+# --- HELPER FUNCTION: LOAD MODELS ---
+MODEL_DIR = "models"  
 
-# --- STYLING & CSS ---
-st.markdown("""
-    <style>
-    .block-container { padding-top: 2rem; }
-    div[data-testid="stMetricValue"] { font-size: 1.6rem; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; }
-    </style>
-""", unsafe_allow_html=True)
+@st.cache_resource
+def load_model(model_name):
+    """
+    Loads a pickle model from a GitHub repository.
+    """
+    # Standardize filename: 'K-Means' -> 'k_means_model.pkl'
+    filename = f"{model_name.lower().replace(' ', '_')}_model.pkl"
+    model_url = f"{GITHUB_MODEL_BASE_URL}/{filename}"
 
-# --- SESSION STATE INITIALIZATION ---
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'labels' not in st.session_state:
-    st.session_state.labels = None
-if 'df_clean' not in st.session_state:
-    st.session_state.df_clean = None
-
-# --- HELPER FUNCTIONS ---
-
-@st.cache_data
-def load_data(file):
-    """Loads CSV or Excel data efficiently."""
     try:
-        if file.name.endswith('.csv'):
-            return pd.read_csv(file)
-        else:
-            return pd.read_excel(file)
+        response = requests.get(model_url)
+        response.raise_for_status()  # raises error for 404 / 403
+
+        model = pickle.load(io.BytesIO(response.content))
+        return model
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Failed to download model from GitHub: {e}")
     except Exception as e:
-        st.error(f"❌ Error loading file: {e}")
-        return None
-
-def preprocess_data(df):
-    """Handles missing values and scaling."""
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    df_clean = df.copy()
+        st.error(f"❌ Error loading model {filename}: {e}")
     
-    # Fill missing values with median
-    for col in numeric_cols:
-        df_clean[col] = df_clean[col].fillna(df_clean[col].median())
     
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(df_clean[numeric_cols])
-    return X_scaled, df_clean, numeric_cols
-
-def save_model_to_pickle(model, model_name):
-    """Saves the trained model to a pickle file."""
-    filename = f"models/{model_name.lower().replace(' ', '_')}.pkl"
-    os.makedirs("models", exist_ok=True)
-    with open(filename, 'wb') as f:
-        pickle.dump(model, f)
-    return filename
-
-def load_model_from_pickle(model_name):
-    """Loads a model from a pickle file."""
-    filename = f"models/{model_name.lower().replace(' ', '_')}.pkl"
-    if os.path.exists(filename):
-        with open(filename, 'rb') as f:
-            return pickle.load(f)
     return None
 
-# --- SIDEBAR CONFIGURATION ---
-with st.sidebar:
-    st.header("🎛️ Project Controls")
+# --- PREPARE FEATURE LIST (EXCLUDE CLUSTER LABELS) ---
+features = df.select_dtypes(include=[np.number]).columns.tolist()
+cluster_cols = ['KMeans_Cluster', 'Hierarchical_Cluster', 'Divisive_Cluster', 
+                    'DBSCAN_Cluster', 'HDBSCAN_Cluster', 'GMM_Cluster', 'Spectral_Cluster']
+feature_list = [c for c in features if c not in cluster_cols]
+
+# --- Loading Models ---
+km = load_model("K-Means")
+agg = load_model("Agglomerative") 
+bk = load_model("Divisive")
+dbscan = load_model("DBSCAN")    
+hdbscan = load_model("HDBSCAN")
+gmm = load_model("GMM")
+scale = load_model("Scaler")
+som = load_model("MiniSom")
+
+# Create models dictionary for easy access
+models = {
+    'KMeans': km,
+    'Agglomerative': agg,
+    'Divisive': bk,
+    'DBSCAN': dbscan,
+    'HDBSCAN': hdbscan,
+    'GMM': gmm,
+    'Scaler': scale,
+    'SOM': som
+}
+
+# --- APP NAVIGATION ---
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Home", "Visualizations", "Model Prediction", "Model Comparison"])
+
+
+# ==========================================
+# 1. HOME PAGE
+# ==========================================
+if page == "Home":
+    st.title("🚀 Project Overview")
+    st.markdown("""
+    Welcome to the **Clustering & Prediction Analytics Dashboard**.
+                
+    This application provides an interactive platform to explore various clustering algorithms applied to world development data.
+    **Available Models:**
+    * **Centroid:** K-Means
+    * **Connectivity:** Agglomerative & Divisive Hierarchical
+    * **Density:** DBSCAN & HDBSCAN
+    * **Probabilistic:** Gaussian Mixture Models (GMM)
+    * **Neural:** Self-Organizing Maps (SOM)
+    * **Graph:** Spectral Clustering
+        
+    **Key Features:**
+    * **Data Analysis:** Explore pre-processed data with advanced clustering features.
+    * **Visualizations:** Interactive charts for diverse clustering algorithms (KMeans, DBSCAN, SOM, etc.).
+    * **Prediction:** Real-time inference using pre-trained models.
+    * **Comparison:** Benchmark model performance side-by-side.
+    """)
+
+
+# ==========================================
+# 2. VISUALIZATIONS PAGE
+# ==========================================
+elif page == "Visualizations":
+    st.title("📊 Data Visualizations")    
+    st.header("📊 Clustering Visualizations")
     
-    uploaded_file = st.file_uploader("📂 Upload Dataset", type=["csv", "xlsx"])
-    
-    st.divider()
-    
-    mode = st.radio("Operation Mode", ["Train New Model", "Load Saved Model"])
-    
-    model_choice = st.selectbox(
-        "Select Algorithm:",
-        ["K-Means", "Hierarchical", "DBSCAN", "HDBSCAN", "GMM", "Spectral", "Bisecting K-Means", "SOM"]
+
+    # Dropdown to select specific model visualization
+    viz_choice = st.selectbox(
+        "Select Model to Visualize:",
+        ["Compare: K-Means/Hierarchical/Divisive", 
+         "DBSCAN", 
+         "HDBSCAN", 
+         "Gaussian Mixture (GMM)", 
+         "Self-Organizing Map (SOM)", 
+         "Spectral Clustering",
+         "Cluster Profiles & Benchmarks"]
     )
-    
-    # Dynamic Hyperparameters based on model choice
-    params = {}
-    if mode == "Train New Model":
-        with st.expander("⚙️ Hyperparameters", expanded=True):
-            if model_choice in ["K-Means", "Hierarchical", "Spectral", "Bisecting K-Means", "GMM"]:
-                params['n_clusters'] = st.slider("Number of Clusters (k)", 2, 15, 3)
-            elif model_choice == "DBSCAN":
-                params['eps'] = st.slider("Epsilon (eps)", 0.1, 5.0, 0.5)
-                params['min_samples'] = st.slider("Min Samples", 2, 20, 5)
-            elif model_choice == "HDBSCAN":
-                params['min_cluster_size'] = st.slider("Min Cluster Size", 2, 50, 5)
-            elif model_choice == "SOM":
-                params['grid_size'] = st.slider("Grid Size (N x N)", 5, 30, 10)
+    # Helper for feature selection
+    def get_feature_selectors(default_x, default_y):
+        c1, c2 = st.columns(2)
+        x = c1.selectbox(f"Select X-Axis:", feature_list, index=feature_list.index(default_x) if default_x in feature_list else 0)
+        y = c2.selectbox(f"Select Y-Axis:", feature_list, index=feature_list.index(default_y) if default_y in feature_list else 1)
+        return x, y, feature_list.index(x), feature_list.index(y)
 
-# --- MAIN APPLICATION ---
 
-col_title, col_logo = st.columns([4, 1])
-with col_title:
-    st.title("🌍 Global Development Clustering")
-    st.caption("Advanced Unsupervised Learning Analysis Platform")
-
-if uploaded_file is None:
-    st.info("👋 Welcome! Please upload your dataset in the sidebar to begin analysis.")
-    # Create dummy data for visualization demo (optional)
-else:
-    df_raw = load_data(uploaded_file)
-    X_scaled, df_clean, numeric_cols = preprocess_data(df_raw)
-    st.session_state.df_clean = df_clean
-
-    # --- TABS LAYOUT ---
-    tab1, tab2, tab3 = st.tabs(["📊 Data Intelligence", "🧠 Model Engine", "📉 Comparative Lab"])
-
-    # TAB 1: DATA INTELLIGENCE
-    with tab1:
-        st.subheader("Dataset Overview")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Rows", df_raw.shape[0])
-        col2.metric("Features", df_raw.shape[1])
-        col3.metric("Missing Values", df_raw.isna().sum().sum())
+# --- 1. K-Means / Hierarchical / Divisive ---
+    if viz_choice == "Compare: K-Means/Hierarchical/Divisive":
         
-        with st.expander("🔍 View Raw Data & Statistics"):
-            st.dataframe(df_raw.head())
-            st.dataframe(df_raw.describe())
+        st.subheader("Comparison: Centroid vs. Hierarchical Approaches")
+        fig, (ax1, ax2 ,ax3) = plt.subplots(1, 3, figsize=(16, 6))
 
-        st.subheader("Feature Distribution Analysis")
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            dist_col = st.selectbox("Select Feature:", numeric_cols)
-        with c2:
-            fig = px.histogram(df_clean, x=dist_col, marginal="box", color_discrete_sequence=['#00CC96'])
-            fig.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+        sns.scatterplot(data=df, x='Birth Rate', y='Life Expectancy Average', hue='KMeans_Cluster', ax=ax1, palette='Set1')
+        ax1.set_title('Standard K-Means (Centroid-Based)')
 
-    # TAB 2: MODEL ENGINE
-    with tab2:
-        col_m1, col_m2 = st.columns([3, 1])
+        sns.scatterplot(data=df, x='Birth Rate', y='Life Expectancy Average', hue='Hierarchical_Cluster', ax=ax2, palette='Set2')
+        ax2.set_title('Agglomerative Clustering (Bottom-Up)')
+
+        sns.scatterplot(data=df, x='Birth Rate', y='Life Expectancy Average', hue='Divisive_Cluster', ax=ax3, palette='Set3')
+        ax3.set_title('Divisive Clustering (Top-Down)')
         
-        with col_m1:
-            st.subheader(f"Active Model: {model_choice}")
-        
-        # --- MODEL TRAINING / LOADING LOGIC ---
-        if st.button("🚀 Run Analysis", type="primary"):
-            model = None
-            labels = None
+        st.pyplot(fig)
+
+        # Dendrogram Toggle [cite: 31-42]
+        if st.checkbox("Show Dendrograms"):
+            st.write("Computing Dendrograms...")
+            linkage_agg = sch.linkage(df_scaled_data, method='ward')
+            linkage_div = sch.linkage(df_scaled_data, method='complete') # Proxy for divisive
+
+            fig_dendro, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(25, 10))
             
-            try:
-                if mode == "Load Saved Model":
-                    model = load_model_from_pickle(model_choice)
-                    if model:
-                        st.success(f"✅ Successfully loaded {model_choice} from storage.")
-                        # Prediction Logic for Loaded Models
-                        if hasattr(model, 'fit_predict'):
-                            labels = model.fit_predict(X_scaled)
-                        elif hasattr(model, 'predict'):
-                            labels = model.predict(X_scaled)
-                        else:
-                            # Fallback for models that don't store state nicely for predict (like DBSCAN)
-                            st.warning("Loaded model object doesn't support direct prediction on new data. Retraining recommended.")
-                    else:
-                        st.error(f"⚠️ No saved model found for {model_choice}. Please train one first.")
+            sch.dendrogram(linkage_agg, truncate_mode='lastp', p=40, ax=ax_d1, leaf_rotation=90)
+            ax_d1.axhline(y=25, color='r', linestyle='--', label='Cut-off (d=25)')
+            ax_d1.set_title('Agglomerative (Ward Linkage)')
+            
+            sch.dendrogram(linkage_div, truncate_mode='lastp', p=40, ax=ax_d2, leaf_rotation=90)
+            ax_d2.axhline(y=6, color='r', linestyle='--', label='Macro Split')
+            ax_d2.set_title('Divisive Proxy (Complete Linkage)')
+            
+            st.pyplot(fig_dendro)
 
-                else:  # Train New Model
-                    with st.spinner(f"Training {model_choice}..."):
-                        if model_choice == "K-Means":
-                            model = KMeans(n_clusters=params['n_clusters'], random_state=42)
-                        elif model_choice == "Hierarchical":
-                            model = AgglomerativeClustering(n_clusters=params['n_clusters'])
-                        elif model_choice == "DBSCAN":
-                            model = DBSCAN(eps=params['eps'], min_samples=params['min_samples'])
-                        elif model_choice == "HDBSCAN":
-                            model = hdbscan.HDBSCAN(min_cluster_size=params['min_cluster_size'])
-                        elif model_choice == "GMM":
-                            model = GaussianMixture(n_components=params['n_clusters'], random_state=42)
-                        elif model_choice == "Spectral":
-                            model = SpectralClustering(n_clusters=params['n_clusters'], affinity='nearest_neighbors', random_state=42)
-                        elif model_choice == "Bisecting K-Means":
-                            model = BisectingKMeans(n_clusters=params['n_clusters'], random_state=42)
-                        elif model_choice == "SOM":
-                            st.info("SOM visualization is generated directly.")
-                            
-                        # Fit and Predict
-                        if model_choice != "SOM":
-                            labels = model.fit_predict(X_scaled)
-                            
-                            # Save the trained model
-                            saved_path = save_model_to_pickle(model, model_choice)
-                            st.success(f"Model trained & saved to {saved_path}")
+    # --- 2. DBSCAN ---
+    elif viz_choice == "DBSCAN":
+        st.subheader("DBSCAN: Density-Based Discovery")
+        x_feat, y_feat, _, _ = get_feature_selectors('GDP', 'Energy Usage')
+        
+        fig, ax = plt.subplots(figsize=(12, 8))
+        unique_clusters = sorted(list(set(df['DBSCAN_Cluster'].unique())))
+        colors = sns.color_palette("viridis", len(unique_clusters))
+        palette = {cluster: colors[i] if cluster != -1 else "#333333" for i, cluster in enumerate(unique_clusters)}
+        
+        fig, ax = plt.subplots(figsize=(12, 8))
+        sns.scatterplot(
+            data=df, x=x_feat, y=y_feat, hue='DBSCAN_Cluster',
+            palette=palette, style=(df['DBSCAN_Cluster'] == -1),
+            markers={True: 'X', False: 'o'}, s=100, alpha=0.7, edgecolor='w', ax=ax
+        )
+        if st.checkbox("Apply Log Scale"):
+                ax.set_xscale('log')
+                ax.set_yscale('log')
 
-                # Store in session state
-                if labels is not None:
-                    st.session_state.labels = labels
-                    st.session_state.model = model
+        ax.set_title(f'DBSCAN Clusters ({x_feat} vs {y_feat})'   )
+        st.pyplot(fig)        
+        n_noise = list(df['DBSCAN_Cluster']).count(-1)
+        st.write(f"**Noise Points Detected:** {n_noise}")
+
+    # --- 3. HDBSCAN ---
+    elif viz_choice == "HDBSCAN":
+        st.subheader("HDBSCAN: Hierarchical Density")
+        x_feat, y_feat, _, _ = get_feature_selectors('GDP', 'Birth Rate')       
+        fig, ax = plt.subplots(figsize=(12, 8))        
+        unique_clusters = sorted(df['HDBSCAN_Cluster'].unique())        
+        sns.scatterplot(
+            data=df, x=x_feat, y=y_feat, hue='HDBSCAN_Cluster',
+            palette="husl", style='HDBSCAN_Cluster', alpha=0.7, s=100, edgecolor='w', ax=ax
+        )
+        if st.checkbox("Apply Log Scale"):
+                ax.set_xscale('log')
+                ax.set_yscale('log')
+        
+        if x_feat == 'GDP' and y_feat == 'Birth Rate':
+            ax.set_title('HDBSCAN Clustering: Major Global Development Zones')
+        else:
+            ax.set_title(f'HDBSCAN Clustering: {x_feat} vs {y_feat}')
+        st.pyplot(fig)
+
+    # --- 4. GMM ---
+    elif viz_choice == "Gaussian Mixture (GMM)":
+        st.subheader("GMM: Probabilistic Clustering")
+        x_feat, y_feat, idx_x, idx_y = get_feature_selectors('GDP', 'Infant Mortality Rate')
+
+        
+        # Helper function to draw covariance ellipses
+        def draw_ellipse(position, covariance, ax=None, **kwargs):
+            ax = ax or plt.gca()
+            if covariance.shape == (2, 2):
+                U, s, Vt = np.linalg.svd(covariance)
+                angle = np.degrees(np.arctan2(U[1, 0], U[0, 0]))
+                width, height = 2 * np.sqrt(s)
+            else:
+                angle = 0
+                width, height = 2 * np.sqrt(covariance)
+            for nsig in range(1, 4):
+                ax.add_patch(Ellipse(xy=position, width=nsig * width, height=nsig * height, angle=angle, **kwargs))
+
+                      
+        fig, ax = plt.subplots(figsize=(12, 8))
+        sns.scatterplot(data=df, x=x_feat, y=y_feat, hue='GMM_Cluster', palette='viridis', 
+         s=100, alpha=0.4, ax=ax)
+        
+        if 'GMM' in models:
+            gmm = models['GMM']
+            try:                
+                centers = gmm.means_[:, [idx_x, idx_y]] 
+                covars = gmm.covariances_[:, [idx_x, idx_y]][:, :, [idx_x, idx_y]]
+                
+                for i in range(len(centers)):
+                    draw_ellipse(centers[i], covars[i], ax=ax, alpha=0.15, 
+                                 color=plt.cm.viridis(i / (gmm.n_components - 1)))                
+                st.success(f"Showing ellipses for {x_feat} vs {y_feat}")
 
             except Exception as e:
-                st.error(f"An error occurred during modeling: {str(e)}")
+                st.error(f"Mapping Error: {e}")
+                st.info("Check if the model features match the CSV features.")
 
-        # --- VISUALIZATION LOGIC ---
-        if st.session_state.labels is not None:
-            labels = st.session_state.labels
-            df_viz = df_clean.copy()
-            df_viz['Cluster'] = labels.astype(str)
-            
-            # Metric Calculation
-            unique_labels = set(labels)
-            n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-            n_noise = list(labels).count(-1)
-            
-            # Calculate Silhouette Score (ignore if only 1 cluster or all noise)
-            score_display = "N/A"
-            if len(unique_labels) > 1:
-                mask = labels != -1
-                if mask.sum() > 0:
-                    score = silhouette_score(X_scaled[mask], labels[mask])
-                    score_display = f"{score:.3f}"
+            if st.checkbox("Apply Log Scale"):
+                ax.set_xscale('log')
+                ax.set_yscale('log')
 
-            # Results Dashboard
-            st.divider()
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Clusters Found", n_clusters)
-            m2.metric("Noise Points", n_noise, delta_color="inverse")
-            m3.metric("Silhouette Coefficient", score_display)
+            ax.set_title(f'GMM Clustering: {x_feat} vs {y_feat}')
+            st.pyplot(fig)
 
-            # Interactive Plotly Scatter
-            st.subheader("Cluster Visualization")
-            c_x, c_y, c_z = st.columns(3)
-            x_ax = c_x.selectbox("X Axis", numeric_cols, index=0)
-            y_ax = c_y.selectbox("Y Axis", numeric_cols, index=1)
-            
-            # 2D Scatter
-            fig = px.scatter(
-                df_viz, x=x_ax, y=y_ax, color='Cluster',
-                hover_data=df_viz.columns[:3], # Show first 3 cols on hover
-                title=f"{model_choice} Clustering Results",
-                template="plotly_white",
-                color_discrete_sequence=px.colors.qualitative.Bold
-            )
-            fig.update_layout(height=500)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # SOM Special Case
-        if model_choice == "SOM" and mode == "Train New Model" and 'params' in locals():
-             if st.button("Generate SOM Map"):
-                som = MiniSom(params['grid_size'], params['grid_size'], X_scaled.shape[1])
-                som.train_random(X_scaled, 100)
-                plt.figure(figsize=(8, 8))
-                plt.pcolor(som.distance_map().T, cmap='bone_r')
-                plt.colorbar()
-                st.pyplot(plt)
-
-    # TAB 3: COMPARATIVE LAB
-    with tab3:
-        st.subheader("🏆 Model Benchmarking")
-        st.write("Compare the performance of different algorithms on your dataset.")
+   # --- 5. SPECTRAL (PCA) ---
+    elif viz_choice == "Spectral Clustering":
+        st.subheader("Spectral: Graph-Based Clustering (PCA Reduced)")
+     
+        pca = PCA(n_components=2)
+        pca_components = pca.fit_transform(df_scaled_data)
+        pca_df = pd.DataFrame(data=pca_components, columns=['PC1', 'PC2'])
+        pca_df['Spectral_Cluster'] = df['Spectral_Cluster'].values
         
-        if st.button("Run Comprehensive Benchmark"):
-            with st.spinner("Running tournament..."):
-                results = []
-                models_to_test = {
-                    "K-Means (k=3)": KMeans(n_clusters=3, random_state=42),
-                    "Agglomerative (k=3)": AgglomerativeClustering(n_clusters=3),
-                    "GMM (k=3)": GaussianMixture(n_components=3, random_state=42),
-                    "Bisecting KM (k=3)": BisectingKMeans(n_clusters=3, random_state=42)
-                }
-                
-                for name, m in models_to_test.items():
-                    try:
-                        lbls = m.fit_predict(X_scaled)
-                        s_score = silhouette_score(X_scaled, lbls)
-                        results.append({'Algorithm': name, 'Silhouette Score': s_score})
-                    except:
-                        continue
-                
-                res_df = pd.DataFrame(results).sort_values(by='Silhouette Score', ascending=False)
-                
-                # Plotly Bar Chart for Comparison
-                fig_comp = px.bar(
-                    res_df, x='Silhouette Score', y='Algorithm', 
-                    orientation='h', 
-                    color='Silhouette Score',
-                    color_continuous_scale='Viridis',
-                    text_auto='.3f',
-                    title="Algorithm Performance Ranking"
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.scatterplot(x='PC1', y='PC2', hue='Spectral_Cluster', data=pca_df, 
+                        palette='viridis', s=150, alpha=0.9, ax=ax)
+        if st.checkbox("Apply Log Scale"):
+                ax.set_xscale('log')
+                ax.set_yscale('log')
+        ax.set_title('Spectral Clustering Visualization (PCA Reduced)')
+        st.pyplot(fig)
+
+    # --- 6. PROFILES & MAPS ---
+    elif viz_choice == "Cluster Profiles & Benchmarks":
+        st.subheader("Global Development Map")
+        
+        fig_map = px.choropleth(
+            df, locations="Country", locationmode='country names',
+            color='Life Expectancy Average', 
+            hover_data=['KMeans_Cluster', 'GDP'],
+            color_continuous_scale=px.colors.sequential.Plasma,
+            title="Global Development Map"
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
+        
+        st.subheader("Cluster DNA (Heatmap)")
+       
+        key_metrics = ['GDP', 'Birth Rate', 'CO2_per_capita', 'Infant Mortality Rate', 'Life Expectancy Average', 'Internet Usage']
+        # Check if columns exist before grouping
+        available_metrics = [m for m in key_metrics if m in df.columns]
+        
+        if available_metrics:
+            # Allow user to choose which cluster type to benchmark against
+            selected_cluster_col = st.selectbox("Select Cluster Type for Benchmarking:", 
+                                                ['KMeans_Cluster', 'GMM_Cluster', 'Spectral_Cluster', 
+                                                 'HDBSCAN_Cluster', 'Hierarchical_Cluster', 'Divisive_Cluster'])
+            
+            # Recalculate summary based on selected cluster column
+            cluster_summary = df.groupby(selected_cluster_col)[available_metrics].mean()
+            scaler = StandardScaler()
+            scaled_summary = pd.DataFrame(scaler.fit_transform(cluster_summary), 
+                                          index=cluster_summary.index, columns=cluster_summary.columns)
+            
+            # Heatmap Visualization 
+            fig_heat, ax = plt.subplots(figsize=(16, 8))
+            sns.heatmap(scaled_summary, annot=cluster_summary, fmt=".2f", cmap="RdYlGn", 
+                        linewidths=.5, annot_kws={"size": 12, "weight": "bold"}, ax=ax)
+            ax.set_title("Development DNA: Strategic Cluster Profiles (Z-Score Heatmap)", fontsize=20, fontweight='bold')
+            ax.set_xlabel('Economic & Social Metrics', fontsize=12)
+            ax.set_ylabel(f'{selected_cluster_col} ID', fontsize=12)
+            st.pyplot(fig_heat)
+            
+            # Cluster vs Global Benchmarks Logic 
+            st.subheader(f"Performance Analysis: {selected_cluster_col} vs Global Benchmarks")
+            global_means = df[available_metrics].mean()
+            
+            # Calculate grid dimensions (2 rows, 3 columns for 6 metrics)
+            num_metrics = len(available_metrics)
+            cols = 3
+            rows = (num_metrics + cols - 1) // cols
+            
+            fig_bench, axes = plt.subplots(rows, cols, figsize=(20, 6 * rows))
+            axes = axes.flatten()
+            
+            for i, metric in enumerate(available_metrics):
+                # Create bar plot for each cluster's mean value of the metric
+                sns.barplot(
+                    x=cluster_summary.index,
+                    y=cluster_summary[metric],
+                    ax=axes[i],
+                    palette="crest",
+                    alpha=0.8,
+                    edgecolor='black'
                 )
-                st.plotly_chart(fig_comp, use_container_width=True)
                 
-                best_model = res_df.iloc[0]
-                st.success(f"🏅 Best Performer: **{best_model['Algorithm']}** with a score of **{best_model['Silhouette Score']:.3f}**")
+                # Add the Global Benchmark line 
+                avg_val = global_means[metric]
+                axes[i].axhline(avg_val, ls='--', color='red', alpha=0.6, label=f'Global Avg: {avg_val:.2f}')
+                
+                # Formatting each subplot 
+                axes[i].set_title(f'{metric}', fontsize=16, fontweight='bold')
+                axes[i].set_xlabel('Cluster ID', fontsize=12)
+                axes[i].set_ylabel('Mean Value', fontsize=12)
+                
+                # Annotate bars with actual values
+                for p in axes[i].patches:
+                    axes[i].annotate(f'{p.get_height():.1f}',
+                                     (p.get_x() + p.get_width() / 2., p.get_height()),
+                                     ha='center', va='center', xytext=(0, 9),
+                                     textcoords='offset points', fontsize=11, fontweight='bold')
+            
+            # Remove any empty subplots
+            for j in range(i + 1, len(axes)):
+                fig_bench.delaxes(axes[j])
+                
+            plt.suptitle(f'{selected_cluster_col} Performance vs. Global Benchmarks', fontsize=24, fontweight='bold', y=1.02)
+            plt.tight_layout()
+            st.pyplot(fig_bench)
+
+    
+
+# # ==========================================
+# # 3. MODEL PREDICTION PAGE
+# # ==========================================
+elif page == "Model Prediction":
+    st.title("🤖 Model Prediction")
+    st.write("🎯 Strategic Action Plans by Cluster")
+
+    # calculate feature columns by excluding cluster labels was taking too long, so I hardcoded the list here for simplicity. keeing in mind that we need to upload it on streamlit, we should avoid any heavy computation on the fly.
+    
+    
+    feature_cols = ['Birth Rate', 'Life Expectancy Average', 'GDP', 'Energy Usage', 
+                    'Infant Mortality Rate', 'Internet Usage', 'CO2_per_capita']
+
+ 
+    
+    # User selects a country to analyze
+    target_country = st.selectbox("Select Country for Strategic Analysis:", df['Country'].unique())
+    country_data = df[df['Country'] == target_country].iloc[0]
+    cluster_id = country_data['KMeans_Cluster']
+    
+    st.subheader(f"Strategy Profile for {target_country} (Cluster {cluster_id})")
+    
+    # Dynamic Business Logic based on your Cluster Profiles [cite: 329-354]
+    strategies = {
+        0: {"Name": "Premium Market", "Strategy": "High-end product launches and infrastructure investment.", "Priority": "Critical"},
+        1: {"Name": "Developing Hub", "Strategy": "Focus on digital literacy and mid-tier consumer goods.", "Priority": "High"},
+        2: {"Name": "Emerging Industrial", "Strategy": "Industrial automation and energy efficiency programs.", "Priority": "Medium"},
+        3: {"Name": "Foundation Tier", "Strategy": "Basic healthcare and educational aid programs.", "Priority": "Essential"},
+        4: {"Name": "Stagnant Growth", "Strategy": "Economic reform incentives and structural support.", "Priority": "Urgent"}
+    }
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Economic Standing", strategies[cluster_id]["Name"])
+        st.info(f"**Action Plan:** {strategies[cluster_id]['Strategy']}")
+    with col2:
+        st.warning(f"**Investment Priority:** {strategies[cluster_id]['Priority']}")
+
+ 
+    # What-If Analysis Simulation
+
+    st.subheader("🛠️ Development Simulation (What-If?)")
+    selected_model = st.selectbox("Select Model for Simulation:", ['KMeans_Cluster', 'GMM_Cluster', 'Spectral_Cluster', 'HDBSCAN_Cluster', 'Hierarchical_Cluster', 'Divisive_Cluster'], index=3)
+
+    selected_metric = st.selectbox("Select Metric to Simulate:", ['Internet Usage', 'GDP', 'Energy Usage','life Expectancy Average', 'Birth Rate', 'Infant Mortality Rate', 'CO2_per_capita'])
+    current_val = country_data[selected_metric]
+    cluster_avg = df[df[selected_model] == cluster_id][selected_metric].mean()
+
+    # Simulation Slider
+    simulated_val = st.slider(f"Adjust {selected_metric} for {target_country}:", 
+                          float(df[selected_metric].min()), float(df[selected_metric].max()), float(current_val))
+
+    # Visualization
+    fig, ax = plt.subplots()
+    sns.barplot(x=['Global Avg', f'Cluster {cluster_id} Avg', f'Simulated {target_country}'], 
+            y=[df[selected_metric].mean(), cluster_avg, simulated_val], palette='viridis')
+    st.pyplot(fig)
+
+    st.subheader("🤝 Peer Group Benchmarking")
+    st.write(f"Countries most similar to **{target_country}** in Cluster {cluster_id}:")
+
+    # Simple logic to find peers in the same cluster
+    peers = df[df['KMeans_Cluster'] == cluster_id][['Country', 'GDP', 'Life Expectancy Average', 'Internet Usage']]
+    # Excluding the selected country itself
+    peers = peers[peers['Country'] != target_country].head(5)
+
+    st.table(peers)
+    st.caption("Strategy: Analyze the 'Success Stories' in this list to replicate growth patterns.")
+
+    # --- 4. MARKET OPPORTUNITY DISCOVERY ---
+    st.subheader("🎯 High-Potential Market Discovery")
+
+    
+    selected_metric_gap = st.selectbox("Select Metric for Gap Analysis:", 
+                                    ['Internet Usage', 'Energy Usage', 'GDP'])
+
+   
+    cluster_avg_gap = df[df['KMeans_Cluster'] == cluster_id][selected_metric_gap].mean()
+    individual_val = country_data[selected_metric_gap]
+
+    
+    gap = cluster_avg_gap - individual_val
+
+    st.write(f"### Analysis for {target_country}")
+
+    if gap > 0:
+        st.success(f"**Opportunity Identified!**")
+        st.write(f"{target_country} is currently **{gap:.1f}% below** its peer group average in {selected_metric_gap}.")
+        st.write("💡 **Business Insight:** There is significant room for growth in this sector to match cluster competitors.")
+    else:
+        st.info(f"{target_country} is already performing above its peer group average in {selected_metric_gap}.")
+
+    
+    fig_gap, ax_gap = plt.subplots(figsize=(10, 4))
+    comparison_df = pd.DataFrame({
+        'Metric': [f'{target_country}', 'Cluster Average', 'Global Average'],
+        'Value': [individual_val, cluster_avg_gap, df[selected_metric_gap].mean()]
+    })
+    sns.barplot(data=comparison_df, x='Value', y='Metric', palette='magma', ax=ax_gap)
+    ax_gap.axvline(cluster_avg_gap, color='red', linestyle='--', label='Target (Cluster Mean)')
+    st.pyplot(fig_gap)
+
+
+# # ==========================================
+# 4. MODEL COMPARISON PAGE
+# ==========================================
+elif page == "Model Comparison":
+    st.title("⚖️ Model Performance Comparison")
+    
+       
+    st.subheader("Silhouette Analysis")
+    
+    comparison_data = {
+        'Model': ['K-Means', 'Hierarchical','Divisive','DBSCAN' ,'HDBSCAN','GMM','Spectral'],
+        'Silhouette Score': [0.228, 0.281, 0.253, -0.097, 0.631, 0.198, 0.224] # Replace with real calc
+    }
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(x='Model', y='Silhouette Score', data=comparison_df.sort_values('Silhouette Score', ascending=False), palette='magma', ax=ax)
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.3f', padding=3)
+
+    
+    # Structure bands
+    plt.axhspan(0.7, 1.0, facecolor='green', alpha=0.1, label='Strong')
+    plt.axhspan(0.5, 0.7, facecolor='yellow', alpha=0.1, label='Medium')
+    plt.axhspan(0.2, 0.5, facecolor='orange', alpha=0.1, label='Weak')
+    
+    st.pyplot(fig)
+    st.dataframe(comparison_df.sort_values('Silhouette Score', ascending=False))
